@@ -20,7 +20,7 @@ The dangerous consequence is **doctrine-code drift**: the methodology document d
 
 ## Verdicts still unconfirmed under the framework
 
-Concretely, what's carrying a stale tag right now. (All figures here are described as *mechanism*, never quoted; that's the redaction discipline from [the style guide](../meta/style-and-redaction.md), and it happens to be the same discipline as the verdict-half-life rule above.)
+Concretely, what's carrying a stale tag right now. (All figures here are described as *mechanism*, never quoted; that's the project's redaction discipline, and it happens to be the same discipline as the verdict-half-life rule above.)
 
 - **Cross-asset momentum sleeves.** A small family of credit-spread → equity-ETF momentum sleeves runs live on paper. Their walk-forward verdicts are V1-era. They have not been re-run under the current bootstrap and deflation regime. We believe the *direction* of the edge is robust (a signal-layer property is more stable than a Sharpe magnitude, see [walk-forward](../part2-research/walk-forward.md)), but we will not call the magnitude confirmed.
 - **The regime-gated leveraged-equity stack.** This one is doubly unconfirmed. Its documented validation describes a *different variant* than the one deployed: a futures-based, gilt-ballasted, lower-leverage configuration with a capitulation overlay that exists in research but **was never wired into the live class.** The live config (an ETF equity sleeve, a USD-Treasury ballast, a different weight split) inherits none of those numbers. The validation and the deployment have diverged into two different objects that happen to share a class name.

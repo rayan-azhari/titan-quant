@@ -3,14 +3,19 @@ site_description: >-
   A practitioner's guide to building, validating, deploying and operating a
   systematic trading system - using a real system ("Titan") as the running,
   sanitised case study.
-site_author: Titan project
+site_author: Dr. Rayan Azhari
+site_url: https://rayan-azhari.github.io/titan-quant/
 copyright: >-
-  &copy; 2026 Titan project. Book content all rights reserved (free to read; not
-  for redistribution or resale). Educational material; not investment advice.
+  &copy; 2026 Dr. Rayan Azhari. Book content all rights reserved (free to read;
+  not for redistribution or resale). Educational material; not investment advice.
 
-# Repo links are optional; fill in if/when this is published.
-# repo_url: https://github.com/<you>/<repo>
-# repo_name: <you>/<repo>
+repo_url: https://github.com/rayan-azhari/titan-quant
+repo_name: rayan-azhari/titan-quant
+
+# The style/redaction guide is a contributor doc (private repo only), not part of
+# the published book; allow it to be absent from the nav without a strict-mode error.
+not_in_nav: |
+  meta/*
 
 theme:
   name: material
@@ -115,5 +120,4 @@ nav:
       - appendix/glossary.md
       - appendix/integration-contract.md
       - appendix/preflight-checklist.md
-  - Meta:
-      - meta/style-and-redaction.md
+  - About & licence: about.md

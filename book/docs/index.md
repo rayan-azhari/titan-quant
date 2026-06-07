@@ -2,6 +2,8 @@
 
 *A practitioner's guide to the unglamorous 90% (validation, risk, plumbing, and operations) that decides whether a trading idea survives contact with a live market.*
 
+**By Dr. Rayan Azhari** &nbsp;·&nbsp; [Source &amp; framework on GitHub](https://github.com/rayan-azhari/titan-quant) &nbsp;·&nbsp; [About &amp; licence](about.md) (free to read, all rights reserved)
+
 ---
 
 Most writing about quant trading is about **finding edges**. This book is about everything that happens *after* you think you've found one: proving it's real, wiring it to a broker without lying to yourself, sizing it so a bad month doesn't end you, and running it as a process that survives restarts, data outages, and your own future mistakes.
