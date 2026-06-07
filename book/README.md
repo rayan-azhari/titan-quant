@@ -43,3 +43,10 @@ else follows its template.
 `docs/index.md` is the preface. Chapters live in `docs/partN-*/`. Appendices in
 `docs/appendix/`. The contributor/style guide is `docs/meta/style-and-redaction.md`.
 The table of contents (and reading order) is defined by `nav:` in `mkdocs.yml`.
+
+## Licence
+
+The book content in this directory is **© 2026 Titan project, all rights
+reserved** — see [`LICENSE`](LICENSE). Free to read; not for redistribution,
+resale, modification, or model training. (The surrounding framework code is
+Apache-2.0; embedded code samples remain Apache-2.0.)

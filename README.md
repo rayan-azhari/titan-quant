@@ -70,4 +70,13 @@ proprietary name is introduced. Please keep example strategies edge-free and edu
 
 ## Licence
 
-[Apache-2.0](LICENSE). See `NOTICE` for attribution.
+This repository is **split-licensed**:
+
+- **Code** — the `titan/` framework, `scripts/`, configs, and tests: [Apache-2.0](LICENSE).
+  Use it, fork it, build on it.
+- **Book** — everything under [`book/`](book/): **© Titan project, all rights reserved**
+  (see [`book/LICENSE`](book/LICENSE)). It is free to **read** here, but may **not** be
+  redistributed, hosted elsewhere, sold, modified, or used to train models without
+  permission. Code samples embedded in the book remain Apache-2.0.
+
+See `NOTICE` for attribution.

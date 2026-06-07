@@ -1,0 +1,27 @@
+Book content licence — "Building a Production Quant Trading Stack"
+
+Copyright (c) 2026 Titan project. All rights reserved.
+
+The prose, figures, tables, and other written content of the book in this `book/`
+directory are NOT covered by the repository's Apache-2.0 licence. The Apache-2.0
+licence (see the repository LICENSE file) applies to the SOFTWARE / source code
+only.
+
+You MAY:
+  - Read the book free of charge, here in this repository and via any edition
+    officially published by the copyright holder.
+  - Quote brief excerpts, with attribution, for the purposes of review,
+    commentary, scholarship, or teaching (fair use / fair dealing).
+
+You MAY NOT, without prior written permission from the copyright holder:
+  - Redistribute, host, mirror, re-publish, or otherwise make available the book
+    or any substantial portion of it.
+  - Sell the book, or include it (in whole or in substantial part) in any paid
+    product, course, or service.
+  - Create, publish, or distribute derivative or modified versions.
+  - Use the content to train machine-learning or generative-AI models.
+
+Code samples embedded within the book remain usable under the repository's
+Apache-2.0 licence.
+
+For any use beyond the above, contact the copyright holder.

@@ -4,7 +4,9 @@ site_description: >-
   systematic trading system - using a real system ("Titan") as the running,
   sanitised case study.
 site_author: Titan project
-copyright: "&copy; Titan project. Educational material; not investment advice."
+copyright: >-
+  &copy; 2026 Titan project. Book content all rights reserved (free to read; not
+  for redistribution or resale). Educational material; not investment advice.
 
 # Repo links are optional; fill in if/when this is published.
 # repo_url: https://github.com/<you>/<repo>
