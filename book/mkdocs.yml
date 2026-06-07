@@ -1,0 +1,117 @@
+site_name: Building a Production Quant Trading Stack
+site_description: >-
+  A practitioner's guide to building, validating, deploying and operating a
+  systematic trading system - using a real system ("Titan") as the running,
+  sanitised case study.
+site_author: Titan project
+copyright: "&copy; Titan project. Educational material; not investment advice."
+
+# Repo links are optional; fill in if/when this is published.
+# repo_url: https://github.com/<you>/<repo>
+# repo_name: <you>/<repo>
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    admonition:
+      note: material/pencil-circle
+      warning: material/alert
+      danger: material/skull
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - "Part I - Foundations & Architecture":
+      - part1-foundations/why-systems-fail.md
+      - part1-foundations/architecture.md
+      - part1-foundations/stack-choices.md
+      - part1-foundations/project-layout.md
+  - "Part II - Research & Validation":
+      - part2-research/typology.md
+      - part2-research/backtest-you-can-trust.md
+      - part2-research/metric-suite.md
+      - part2-research/walk-forward.md
+      - part2-research/deflated-sharpe.md
+      - part2-research/tail-risk-and-ruin.md
+      - part2-research/sanctuary-decision-matrix.md
+      - part2-research/failure-mode-catalogue.md
+  - "Part III - Data Engineering":
+      - part3-data/sourcing-storage.md
+      - part3-data/data-quality-gate.md
+  - "Part IV - From Research to Production":
+      - part4-research-to-prod/strategy-class-contract.md
+      - part4-research-to-prod/live-equals-research.md
+      - part4-research-to-prod/broker-realities.md
+  - "Part V - Portfolio & Risk":
+      - part5-portfolio-risk/per-strategy-equity-fx.md
+      - part5-portfolio-risk/position-sizing-kelly.md
+      - part5-portfolio-risk/portfolio-risk-manager.md
+      - part5-portfolio-risk/allocator-correlation-dial.md
+      - part5-portfolio-risk/layered-safety.md
+  - "Part VI - Deployment & Operations":
+      - part6-deploy-ops/containerizing.md
+      - part6-deploy-ops/live-runbook.md
+      - part6-deploy-ops/paper-to-live.md
+  - "Part VII - Reflections":
+      - part7-reflections/caveats-open-problems.md
+      - part7-reflections/reading-list.md
+  - Appendices:
+      - appendix/glossary.md
+      - appendix/integration-contract.md
+      - appendix/preflight-checklist.md
+  - Meta:
+      - meta/style-and-redaction.md

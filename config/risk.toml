@@ -1,0 +1,26 @@
+# Illustrative portfolio risk configuration for the titan-quant demo.
+# These are teaching defaults, not a deployed configuration.
+
+[portfolio]
+# Halt the whole book if portfolio drawdown breaches these (fractions of peak NAV).
+heat_drawdown = 0.10        # soft: begin de-risking
+kill_drawdown = 0.15        # hard: flatten everything
+ewma_lambda   = 0.94        # daily EWMA decay for vol/correlation
+
+[allocation]
+method = "inverse_vol"      # inverse_vol | erc | cdar (see titan/research/framework/allocator_*)
+rebalance = "daily"         # rebalance by wall-clock date, not tick count
+
+# Correlation-dial leverage governor. Fail-safe to 1.0 (i.e. identical to plain
+# inverse-vol) when disabled or data is missing. See titan/risk/correlation_dial.py.
+[allocation.correlation_dial]
+enabled        = false      # opt-in; off by default
+lookback_days  = 63
+z_coefficient  = 0.5        # leverage = clip(1 - 0.5 * z(mean_pairwise_corr), lo, hi)
+leverage_min   = 0.3
+leverage_max   = 1.5
+
+[dd_throttle]
+# Graded de-risk ladder (see titan/research/framework/dd_throttle.py).
+trigger_dd = 0.08           # halve sizing below -8% from 60d peak
+reset_dd   = 0.04           # restore full sizing back within -4% (hysteresis)

@@ -1,0 +1,11 @@
+# Build dependencies for the book (MkDocs Material).
+#   python -m venv .venv && . .venv/bin/activate   (or use `uv run`)
+#   pip install -r requirements.txt
+#   mkdocs serve         # live preview at http://127.0.0.1:8000
+#   mkdocs build         # static site -> ./site
+#
+# PDF export (optional): uncomment mkdocs-with-pdf, then
+#   ENABLE_PDF_EXPORT=1 mkdocs build
+mkdocs-material>=9.5
+pymdown-extensions>=10.7
+# mkdocs-with-pdf>=0.9.3   # optional single-file PDF of the whole book

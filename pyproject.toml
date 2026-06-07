@@ -1,0 +1,59 @@
+[project]
+name = "titan-quant"
+version = "0.1.0"
+description = "Open companion framework to the book 'Building a Production Quant Trading Stack': validation (WFO, sanctuary, DSR, Monte Carlo, risk of ruin), shared metrics, and a portfolio/risk layer."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Titan project contributors" }]
+keywords = ["quant", "trading", "backtesting", "walk-forward", "risk", "nautilus-trader"]
+
+# Core framework dependencies (validation math + risk layer).
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
+    "pyarrow>=14.0",
+]
+
+[project.optional-dependencies]
+# Charts/dashboards (plotly + jinja2) and the sample-data downloader.
+viz = ["plotly>=5.18", "jinja2>=3.1"]
+data = ["yfinance>=0.2"]
+# Live/paper execution via NautilusTrader (the demo strategy + integration contract).
+live = ["nautilus_trader>=1.190"]
+# Everything needed to run the demo end-to-end.
+demo = ["titan-quant[viz,data,live]"]
+# Tooling for contributors.
+dev = [
+    "ruff>=0.5",
+    "pytest>=8.0",
+    "mkdocs-material>=9.5",
+    "pymdown-extensions>=10.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["titan"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Operational scripts and tests may run long lines / import after path setup.
+"scripts/*" = ["E501", "E402"]
+"tests/*" = ["E501", "E402"]
+# Inline HTML template strings in the dashboard exceed the line limit.
+"titan/research/framework/dashboard.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

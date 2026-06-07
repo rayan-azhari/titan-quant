@@ -1,0 +1,12 @@
+# Demo trend strategy parameters (educational; no expected edge).
+[strategy]
+instrument   = "SPY"        # any daily series you downloaded into data/
+fast         = 20           # fast SMA window (bars)
+slow         = 100          # slow SMA window (bars)
+periods_per_year = 252      # daily bars -> annualisation factor
+
+# Illustrative sizing intent. The real sizing math (Kelly / vol-target) lives in
+# titan/research/framework/kelly.py and is covered in the book, Part V.
+[sizing]
+target_vol_annual = 0.10    # 10% annualised, illustrative
+max_leverage      = 1.0
