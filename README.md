@@ -2,7 +2,7 @@
 
 **The open framework companion to the book _Building a Production Quant Trading Stack_.**
 
-> 📖 **Read the book online:** <https://www.rayanazhari.co.uk/titan-quant-book/>
+> 📖 **Read the book online:** <https://www.rayanazhari.co.uk/books/building-a-production-quant-trading-stack/>
 
 The book teaches the *process* of building a systematic trading system you can trust; this
 repository gives you the actual **framework** (validation, metrics, risk) plus small
@@ -74,7 +74,7 @@ This project is **split-licensed**:
 
 - **Code** (this repository: `titan/`, `scripts/`, configs, tests): [Apache-2.0](LICENSE).
   Use it, fork it, build on it.
-- **Book** (hosted at <https://www.rayanazhari.co.uk/titan-quant-book/>): **© 2026 Dr. Rayan Azhari,
+- **Book** (hosted at <https://www.rayanazhari.co.uk/books/building-a-production-quant-trading-stack/>): **© 2026 Dr. Rayan Azhari,
   all rights reserved**. Free to read; not for redistribution, hosting, resale, modification, or
   model training without permission. The book's source is not included in this repository.
 
