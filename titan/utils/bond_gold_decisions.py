@@ -19,12 +19,22 @@ the broader operational-robustness framework these primitives serve.
 
 from __future__ import annotations
 
+import json
 import math
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# Shared signal-state file written by BondGoldStrategy after each bar and
+# read by the D5 reconciliation check. Always reflects the same z-score the
+# live strategy used to make its last trading decision, so D5 never diverges
+# from the strategy due to stale parquet data.
+_SIGNAL_STATE_FILE = Path(__file__).resolve().parents[2] / ".tmp" / "signal_state.json"
+_SIGNAL_STATE_LOCK = threading.Lock()
 
 # ── Per-strategy config (mirrors STRATEGY_REGISTRY entries) ──────────
 
@@ -131,6 +141,64 @@ def expected_action(
     if not is_long and z > threshold:
         return "entry"
     return "hold"
+
+
+def write_signal_state(
+    strategy_name: str,
+    z: float,
+    signal: str,
+    *,
+    state_file: Path | None = None,
+) -> None:
+    """Write this strategy's current z-score to the shared signal-state file.
+
+    Called by BondGoldStrategy after each daily bar so D5 always has the
+    same z-score the strategy used to make its last trading decision.
+    Atomic (tmp-file + replace) and thread-safe. Never raises — failure is
+    silently swallowed so a write error never crashes the strategy.
+    """
+    path = state_file if state_file is not None else _SIGNAL_STATE_FILE
+    entry = {"z": round(z, 6), "signal": signal, "ts_ns": time.time_ns()}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _SIGNAL_STATE_LOCK:
+            try:
+                existing: dict = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            existing[strategy_name] = entry
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            tmp.replace(path)
+    except Exception:
+        pass
+
+
+def read_signal_state(
+    strategy_name: str,
+    *,
+    max_age_s: float = 129_600.0,  # 36 h — spans a weekend gap
+    state_file: Path | None = None,
+) -> float | None:
+    """Return the strategy's last written z-score, or None if the entry is
+    absent, stale, or the file is unreadable.
+
+    Callers should fall back to parquet-based computation when None is
+    returned (e.g. before the first daily bar fires after a container
+    restart).
+    """
+    path = state_file if state_file is not None else _SIGNAL_STATE_FILE
+    try:
+        data: dict = json.loads(path.read_text(encoding="utf-8"))
+        entry = data.get(strategy_name)
+        if not entry:
+            return None
+        age_s = (time.time_ns() - int(entry["ts_ns"])) / 1_000_000_000
+        if age_s > max_age_s:
+            return None
+        return float(entry["z"])
+    except Exception:
+        return None
 
 
 def load_signal_closes_from_parquet(ticker: str, data_dir: Path) -> list[float] | None:

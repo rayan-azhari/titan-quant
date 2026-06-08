@@ -215,8 +215,20 @@ def report_equity_and_check(
     equity: float | None = None
     if tracker is not None:
         equity = tracker.current_equity()
-
-    if equity is None or equity <= 0:
+        if equity <= 0:
+            # Tracker is wired: trust it rather than falling back to account NLV.
+            # A zero/negative result means the strategy has consumed its seed
+            # capital. Skip the PRM update for this bar (last known equity is
+            # preserved) rather than corrupting cross-strategy sizing with
+            # whole-account NLV -- the exact anti-pattern the tracker prevents.
+            logger.warning(
+                "[%s] tracker equity=%.2f <= 0; skipping PRM update this bar.",
+                prm_id,
+                equity,
+            )
+            return 0.0, portfolio_risk_manager.halt_all
+    else:
+        # No tracker: legacy fallback path. Fetch NLV in a deterministic ccy.
         accounts = strategy.cache.accounts() if hasattr(strategy, "cache") else []
         if accounts:
             equity = get_base_balance(accounts[0], fallback_account_ccy)

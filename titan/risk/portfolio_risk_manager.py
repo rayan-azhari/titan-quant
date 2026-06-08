@@ -1058,11 +1058,11 @@ class PortfolioRiskManager:
         if len(port_rets) < 10:
             return
 
+        # pandas ewm for consistency with PortfolioAllocator's EWMA convention.
+        # adjust=False = infinite-history EWMA; mean of r² = EWMA variance estimator.
         lam = float(self._config["vol_ewma_lambda"])
-        var = float(port_rets.iloc[0] ** 2)
-        for r in port_rets.iloc[1:]:
-            var = lam * var + (1.0 - lam) * (r * r)
-        self._ewma_var = var
+        ewm_var_series = (port_rets**2).ewm(alpha=1.0 - lam, adjust=False).mean()
+        self._ewma_var = float(ewm_var_series.iloc[-1])
         self._last_daily_nav = float(df.iloc[-1].sum(skipna=True))
 
     def _annualized_vol(self) -> float | None:

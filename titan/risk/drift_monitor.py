@@ -50,19 +50,74 @@ def realised_rolling_maxdd(nav: pd.Series, window_bars: int) -> float:
 def predicted_maxdd_band(
     returns,
     *,
+    underlying_returns=None,
+    portfolio_weights=None,
     horizon_bars: int = DEFAULT_HORIZON_BARS,
     block_size: int = DEFAULT_BLOCK_SIZE,
     n_paths: int = DEFAULT_N_PATHS,
     seed: int = 42,
     percentiles: tuple[int, ...] = (95, 99),
 ) -> dict[int, float]:
-    """Block-bootstrap ``returns`` over the horizon; return the MaxDD band.
+    """Block-bootstrap over the horizon; return the MaxDD band.
 
-    ``returns`` are SIMPLE per-bar returns. The result maps each requested
-    severity percentile to the MaxDD value at that tail -- e.g. ``band[95]`` is
-    the MaxDD only 5% of bootstrap paths are WORSE than (a non-positive float),
-    matching ``RuinAssessment.p95_maxdd_at_size``. More-negative = deeper.
+    Two operating modes, selected by whether ``underlying_returns`` is supplied:
+
+    **Audit-A6 mode** (``underlying_returns`` + ``portfolio_weights`` provided):
+        Bootstrap rows from the per-strategy return matrix with SHARED block
+        indices, then combine with ``portfolio_weights`` to get synthetic
+        portfolio returns per path. Shared draws preserve the cross-strategy
+        correlation structure (a bad regime hits all strategies at once), so
+        the MC captures correlation spikes that bootstrapping the combined
+        portfolio series cannot. This is the recommended path for any live
+        multi-strategy book.
+
+    **Legacy mode** (only ``returns`` provided):
+        Bootstrap the combined portfolio returns directly. This understates tail
+        risk because the correlation structure is already baked into the series
+        and bad-regime draws are diluted. Kept for backward compatibility.
+
+    Parameters
+    ----------
+
+    Returns:
+        1-D array of combined portfolio returns (used in legacy mode; ignored
+        when ``underlying_returns`` is supplied).
+    underlying_returns:
+        (T × N) array-like of per-strategy daily returns, one column per
+        strategy. Rows must be aligned (same dates).
+    portfolio_weights:
+        Length-N array of portfolio weights, one per column of
+        ``underlying_returns``. Need not sum to 1 (normalised internally).
     """
+    if underlying_returns is not None:
+        # Audit-A6 path: shared-block bootstrap over the strategy return matrix.
+        U = np.asarray(underlying_returns, dtype=float)
+        w = np.asarray(portfolio_weights, dtype=float)
+        w = w / w.sum()
+        # Drop rows where ANY strategy has a non-finite return.
+        finite_mask = np.isfinite(U).all(axis=1)
+        U = U[finite_mask]
+        n_obs, _n_strat = U.shape
+        if n_obs < block_size + 1 or horizon_bars < 2:
+            return {p: 0.0 for p in percentiles}
+        rng = np.random.default_rng(seed)
+        n_blocks = (horizon_bars + block_size - 1) // block_size
+        n_available = n_obs - block_size + 1
+        maxdds = np.empty(n_paths, dtype=float)
+        for i in range(n_paths):
+            # Shared block indices preserve cross-strategy correlation.
+            starts = rng.integers(0, n_available, size=n_blocks)
+            path_mat = np.concatenate([U[s : s + block_size] for s in starts])[
+                :horizon_bars
+            ]  # (horizon_bars, N)
+            path_port = path_mat @ w  # (horizon_bars,) weighted portfolio return
+            eq = np.cumprod(1.0 + path_port)
+            peak = np.maximum.accumulate(eq)
+            maxdds[i] = float((eq / peak - 1.0).min())
+        return {p: float(np.percentile(maxdds, 100 - p)) for p in percentiles}
+
+    # Legacy path: bootstrap combined portfolio returns directly.
+    # Understates tail risk (see docstring). Use underlying_returns when possible.
     r = np.asarray(returns, dtype=float)
     r = r[np.isfinite(r)]
     if len(r) < block_size + 1 or horizon_bars < 2:

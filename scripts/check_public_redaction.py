@@ -10,6 +10,7 @@ cannot reintroduce a leak.
 
     python scripts/check_public_redaction.py [ROOT]   # default ROOT = "."
 """
+
 from __future__ import annotations
 
 import re
@@ -41,7 +42,19 @@ PLACEHOLDER = re.compile(
 )
 
 SKIP_DIRS = {".git", "__pycache__", "site", ".venv", "node_modules", ".mypy_cache", ".ruff_cache"}
-SKIP_SUFFIX = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".parquet", ".lock", ".ico", ".woff", ".woff2"}
+SKIP_SUFFIX = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".pdf",
+    ".zip",
+    ".parquet",
+    ".lock",
+    ".ico",
+    ".woff",
+    ".woff2",
+}
 SKIP_NAMES = {"check_public_redaction.py"}  # this file holds the patterns itself
 
 
@@ -50,7 +63,11 @@ def scan(root: Path) -> list[tuple[str, int, str, str]]:
     for p in root.rglob("*"):
         if not p.is_file():
             continue
-        if any(part in SKIP_DIRS for part in p.parts) or p.suffix.lower() in SKIP_SUFFIX or p.name in SKIP_NAMES:
+        if (
+            any(part in SKIP_DIRS for part in p.parts)
+            or p.suffix.lower() in SKIP_SUFFIX
+            or p.name in SKIP_NAMES
+        ):
             continue
         try:
             text = p.read_text(encoding="utf-8")
@@ -77,7 +94,10 @@ def main() -> int:
     print(f"[redaction] FAIL — {len(hits)} potential leak(s) under {root}:\n", file=sys.stderr)
     for rel, ln, label, snippet in hits:
         print(f"  {rel}:{ln}  [{label}]  {snippet}", file=sys.stderr)
-    print("\nRefusing to publish. Sanitise the above (or extend the allowlist deliberately).", file=sys.stderr)
+    print(
+        "\nRefusing to publish. Sanitise the above (or extend the allowlist deliberately).",
+        file=sys.stderr,
+    )
     return 1
 
 
