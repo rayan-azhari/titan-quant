@@ -15,9 +15,14 @@ Backends (auto-detected at send time):
 If both are configured, both receive the message. If neither is configured,
 the call is a no-op (with a single one-time stderr warning).
 
-All sends are best-effort, fire-and-forget with a 2-second timeout. Network
-failures are logged but never propagated to the caller — the strategy must
-not slow down because Slack is having a bad day.
+Sends are genuinely fire-and-forget: each backend POST runs on a daemon worker
+thread, so a slow/hung webhook (including unbounded DNS resolution, which the
+2-second urlopen timeout does NOT bound) can never block the NautilusTrader
+event loop — the 2026-06-11 audit found these calls were synchronous on the
+trading thread, amplified during rejection storms. The default ``_dispatch``
+returns the count of CONFIGURED backends (not successes), so the only meaning
+of a 0 return is "no backend configured". The CLI smoke test uses
+``block=True`` to wait for the actual delivery result.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
 import urllib.parse
 import urllib.request
 from typing import Any
@@ -41,6 +48,39 @@ def _telegram_creds() -> tuple[str | None, str | None]:
 
 
 _warned_no_backend = False
+
+# Fire-and-forget delivery bookkeeping. A rejection storm (every order across
+# every strategy rejected during an account lockout) could otherwise spawn
+# unbounded worker threads / queue unbounded backlog, so we cap in-flight sends.
+_inflight = 0
+_inflight_lock = threading.Lock()
+_MAX_INFLIGHT = 200
+_warned_dropped = False
+
+# Telegram hard text limit (chars). Over-length messages get HTTP 400.
+_TELEGRAM_MAX = 4096
+
+# Order-event de-duplication. The global rejection hook AND a strategy's own
+# on_order_rejected both fire for the same OrderRejected, so without this every
+# rejection from bond_gold/demo_fxmr produced two near-identical alerts (audit
+# 2026-06-11). Collapse repeats of the same (strategy, event, instrument) within
+# a short window to a single alert.
+_order_event_seen: dict[tuple[str, str, str], float] = {}
+_order_event_lock = threading.Lock()
+_ORDER_EVENT_TTL = 5.0
+
+
+def _order_event_is_dup(strategy: str, event_type: str, instrument: str) -> bool:
+    key = (strategy, event_type.lower(), instrument)
+    now = time.monotonic()
+    with _order_event_lock:
+        for k, ts in list(_order_event_seen.items()):
+            if now - ts > _ORDER_EVENT_TTL:
+                del _order_event_seen[k]
+        if key in _order_event_seen:
+            return True
+        _order_event_seen[key] = now
+        return False
 
 
 # ── Low-level senders ─────────────────────────────────────────────────────────
@@ -64,14 +104,25 @@ def _post_slack(text: str) -> bool:
         return False
 
 
+def _strip_slack_markdown(text: str) -> str:
+    """Strip Slack-flavoured markup (asterisks for bold, backticks for code).
+
+    Telegram with parse_mode omitted renders those characters literally, so we
+    remove them for a clean plain-text render rather than leaking the markup.
+    """
+    return text.replace("*", "").replace("`", "")
+
+
 def _post_telegram(text: str) -> bool:
     token, chat_id = _telegram_creds()
     if not token or not chat_id:
         return False
+    body = _strip_slack_markdown(text)
+    if len(body) > _TELEGRAM_MAX:
+        # Truncate with an explicit marker — an over-length body 400s silently.
+        body = body[: _TELEGRAM_MAX - 20].rstrip() + "\n…(truncated)"
     api_url = f"https://api.telegram.org/bot{token}/sendMessage"
-    # Telegram's Markdown is fussy; use plain text + emoji. parse_mode omitted
-    # so message renders as-is regardless of stray underscores etc.
-    payload = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode("utf-8")
+    payload = urllib.parse.urlencode({"chat_id": chat_id, "text": body}).encode("utf-8")
     req = urllib.request.Request(
         api_url,
         data=payload,
@@ -85,22 +136,69 @@ def _post_telegram(text: str) -> bool:
         return False
 
 
-def _dispatch(text: str) -> int:
-    """Send to all configured backends. Returns count of successful sends."""
-    global _warned_no_backend
-    sent = 0
+def _safe_send(fn, text: str) -> bool:
+    global _inflight
+    try:
+        return bool(fn(text))
+    except Exception as e:  # noqa: BLE001 — a send must never crash a worker
+        print(f"  ✗ notify worker failed: {e}", file=sys.stderr)
+        return False
+    finally:
+        with _inflight_lock:
+            _inflight -= 1
+
+
+def _dispatch(text: str, *, block: bool = False) -> int:
+    """Dispatch ``text`` to all configured backends.
+
+    Default (``block=False``): fire-and-forget on daemon threads; returns the
+    count of CONFIGURED backends (so a 0 return means *no backend configured*,
+    never *a send failed* — the prior code conflated the two). ``block=True``
+    sends synchronously and returns the count of SUCCESSFUL sends (used by the
+    CLI smoke test and any caller that needs the real delivery result).
+    """
+    global _warned_no_backend, _inflight, _warned_dropped
+    backends = []
     if _slack_url():
-        sent += int(_post_slack(text))
+        backends.append(_post_slack)
     if all(_telegram_creds()):
-        sent += int(_post_telegram(text))
-    if sent == 0 and not _warned_no_backend:
-        print(
-            "  notify: no backend configured (set SLACK_WEBHOOK_URL or "
-            "TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID). Notifications skipped.",
-            file=sys.stderr,
-        )
-        _warned_no_backend = True
-    return sent
+        backends.append(_post_telegram)
+
+    if not backends:
+        if not _warned_no_backend:
+            print(
+                "  notify: no backend configured (set SLACK_WEBHOOK_URL or "
+                "TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID). Notifications skipped.",
+                file=sys.stderr,
+            )
+            _warned_no_backend = True
+        return 0
+
+    if block:
+        return sum(int(_safe_send_blocking(fn, text)) for fn in backends)
+
+    for fn in backends:
+        with _inflight_lock:
+            if _inflight >= _MAX_INFLIGHT:
+                if not _warned_dropped:
+                    print(
+                        f"  notify: >{_MAX_INFLIGHT} sends in flight — dropping "
+                        "(webhook backlog?).",
+                        file=sys.stderr,
+                    )
+                    _warned_dropped = True
+                continue
+            _inflight += 1
+        threading.Thread(target=_safe_send, args=(fn, text), daemon=True).start()
+    return len(backends)
+
+
+def _safe_send_blocking(fn, text: str) -> bool:
+    try:
+        return bool(fn(text))
+    except Exception as e:  # noqa: BLE001
+        print(f"  ✗ notify failed: {e}", file=sys.stderr)
+        return False
 
 
 # ── Backward-compatible Guardian alert API ────────────────────────────────────
@@ -217,6 +315,9 @@ def notify_order_event(
         note: Free-form note (e.g. ``"queued for next session"`` from IBKR
               warning code 399).
     """
+    # Collapse the global-hook + per-strategy duplicate for the same event.
+    if _order_event_is_dup(strategy, event_type, instrument):
+        return 0
     et = event_type.lower()
     emoji_map = {
         "accepted": "📝",
@@ -407,7 +508,13 @@ def main() -> None:
     else:
         n = send_slack_message("This is a Guardian-style test alert.", severity="info")
         n = 1 if n else 0
-    print(f"  notify: dispatched to {n} backend(s)")
+        print(f"  notify: dispatched to {n} backend(s)")
+        return
+    # The semantic helpers above dispatch fire-and-forget; re-send synchronously
+    # so the smoke test reports the real delivery result and the daemon worker
+    # isn't cut off by process exit.
+    delivered = _dispatch("🧪 notification smoke test (synchronous)", block=True)
+    print(f"  notify: {n} backend(s) configured; synchronous test delivered to {delivered}")
 
 
 if __name__ == "__main__":

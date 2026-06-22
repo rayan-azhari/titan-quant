@@ -232,6 +232,8 @@ class PortfolioRiskManager:
         self._drift_triggered: bool = False
         self._dd_band: tuple[float, float] | None = None  # (p95, p99), non-positive
         self._last_drift_date: date | None = None
+        # One-shot guard so the band-vs-bundle mismatch warning isn't spammed.
+        self._dd_band_mismatch_warned: bool = False
 
         # Halt persistence -- read disk state on construction so crash+restart
         # cannot silently un-halt.
@@ -491,6 +493,27 @@ class PortfolioRiskManager:
                         threshold,
                     )
 
+    @staticmethod
+    def _notify_kill(reason: str, operator: str) -> None:
+        """Push a critical alert that the kill switch fired.
+
+        The -15% auto-kill and external trip_halt are the single most important
+        risk events in the system, yet the 2026-06-11 audit found they were
+        log-and-file only — no push. notify_health is now fire-and-forget
+        (daemon-thread send), so this never blocks the caller. Fully guarded:
+        a notification failure must never interfere with the halt itself.
+        """
+        try:
+            from titan.utils.notification import notify_health
+
+            notify_health(
+                f"KILL SWITCH fired (operator={operator})",
+                severity="critical",
+                detail=reason,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[PortfolioRM] kill-switch notify failed: %s", e)
+
     def trip_halt(self, reason: str, operator: str = "unknown") -> bool:
         """Externally trip the kill switch (audit P0-10): halt_all + scale 0,
         persisted so a restart stays halted. Used by the reconciliation
@@ -508,6 +531,7 @@ class PortfolioRiskManager:
         logger.critical(
             "[PortfolioRM] KILL SWITCH TRIPPED externally by %s -- %s", operator, reason
         )
+        self._notify_kill(reason, operator)
         return True
 
     def reset_halt(self, operator: str = "unknown") -> None:
@@ -879,6 +903,12 @@ class PortfolioRiskManager:
     def _refresh_dd_band_from_disk(self) -> None:
         """Load the MaxDD band written by the drift monitor, if present. Absent
         / unreadable -> leave the current band (best-effort, never raises).
+
+        Honours the band's ``applicable`` provenance flag (2026-06-11 audit): if
+        the band's baseline portfolio does not model the live bundle, it is
+        marked applicable=false and we keep the drift de-risk INERT (clear the
+        band -> update_drift_state no-ops -> drift_scale stays 1.0) rather than
+        throttling scale_factor against a mismatched MaxDD distribution.
         """
         if not _DD_BAND_PATH.exists():
             return
@@ -886,6 +916,19 @@ class PortfolioRiskManager:
             data = json.loads(_DD_BAND_PATH.read_text())
             p95, p99 = float(data["p95"]), float(data["p99"])
         except Exception:  # noqa: BLE001
+            return
+        if data.get("applicable") is False:
+            if self._dd_band is not None or not self._dd_band_mismatch_warned:
+                logger.warning(
+                    "[PortfolioRM] dd_band.json baseline '%s' does not match the live "
+                    "bundle '%s' (applicable=false). Keeping P0-9 drift de-risk INERT.",
+                    data.get("baseline_bundle", "?"),
+                    data.get("active_bundle", "?"),
+                )
+                self._dd_band_mismatch_warned = True
+            self._dd_band = None
+            self._drift_scale = 1.0
+            self._drift_triggered = False
             return
         self.set_predicted_dd_band(p95, p99)
 
@@ -1139,6 +1182,7 @@ class PortfolioRiskManager:
                 port_dd * 100,
                 max_dd * 100,
             )
+            self._notify_kill(self._halt_reason, "auto-kill")
             return
 
         # DD heat always evaluated on every tick.

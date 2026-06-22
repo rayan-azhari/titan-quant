@@ -36,6 +36,18 @@ import pandas as pd
 _SIGNAL_STATE_FILE = Path(__file__).resolve().parents[2] / ".tmp" / "signal_state.json"
 _SIGNAL_STATE_LOCK = threading.Lock()
 
+# Shared hold-state file written by BondGoldStrategy on entry and after each
+# daily bar, and read on rehydration. It persists the TRUE elapsed hold
+# (``bars_held`` + entry timestamp) per trade instrument so a container
+# restart restores the real min-hold progress instead of re-seeding
+# ``hold_days``. The old rehydration seeded ``bars_held = hold_days``, which
+# made every rehydrated position instantly "past min-hold" — so any restart
+# inside a position's min-hold window silently defeated the guard and could
+# exit a bar early (observed 2026-06-22: VUSD/EIMI exited on the 4th of 5
+# required bars after a restart). Keyed by the trade instrument id string.
+_HOLD_STATE_FILE = Path(__file__).resolve().parents[2] / ".tmp" / "bond_gold_hold_state.json"
+_HOLD_STATE_LOCK = threading.Lock()
+
 # ── Per-strategy config (mirrors STRATEGY_REGISTRY entries) ──────────
 
 
@@ -199,6 +211,96 @@ def read_signal_state(
         return float(entry["z"])
     except Exception:
         return None
+
+
+def write_hold_state(
+    instrument_key: str,
+    bars_held: int,
+    entry_ts_ns: int,
+    *,
+    state_file: Path | None = None,
+) -> None:
+    """Persist the live hold-state (``bars_held`` + entry timestamp) for one
+    bond_gold-class trade instrument.
+
+    Called by ``BondGoldStrategy`` on entry and after each daily bar so a
+    container restart can restore the TRUE elapsed hold instead of re-seeding
+    ``hold_days``. Atomic (tmp-file + replace) and thread-safe. Never raises —
+    a write failure is silently swallowed so it can never crash the strategy.
+    """
+    path = state_file if state_file is not None else _HOLD_STATE_FILE
+    entry = {
+        "bars_held": int(bars_held),
+        "entry_ts_ns": int(entry_ts_ns),
+        "ts_ns": time.time_ns(),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _HOLD_STATE_LOCK:
+            try:
+                existing: dict = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            existing[instrument_key] = entry
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            tmp.replace(path)
+    except Exception:
+        pass
+
+
+def read_hold_state(
+    instrument_key: str,
+    *,
+    state_file: Path | None = None,
+) -> dict | None:
+    """Return ``{"bars_held": int, "entry_ts_ns": int}`` for the instrument,
+    or None if the entry is absent or the file is unreadable.
+
+    Used by ``BondGoldStrategy`` rehydration to restore the true elapsed hold.
+    None means no live state was persisted (e.g. a genuinely pre-existing
+    EXTERNAL position this process never opened) — the caller then falls back
+    to the conservative ``hold_days`` seed.
+    """
+    path = state_file if state_file is not None else _HOLD_STATE_FILE
+    try:
+        data: dict = json.loads(path.read_text(encoding="utf-8"))
+        entry = data.get(instrument_key)
+        if not entry:
+            return None
+        return {
+            "bars_held": int(entry["bars_held"]),
+            "entry_ts_ns": int(entry.get("entry_ts_ns", 0)),
+        }
+    except Exception:
+        return None
+
+
+def clear_hold_state(
+    instrument_key: str,
+    *,
+    state_file: Path | None = None,
+) -> None:
+    """Remove the persisted hold-state for one instrument (on exit / close).
+
+    Idempotent and never raises. After clearing, a subsequent rehydration
+    finds no state and falls back to the conservative ``hold_days`` seed.
+    """
+    path = state_file if state_file is not None else _HOLD_STATE_FILE
+    try:
+        with _HOLD_STATE_LOCK:
+            try:
+                existing: dict = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return
+            if instrument_key not in existing:
+                return
+            del existing[instrument_key]
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            tmp.replace(path)
+    except Exception:
+        pass
 
 
 def load_signal_closes_from_parquet(ticker: str, data_dir: Path) -> list[float] | None:

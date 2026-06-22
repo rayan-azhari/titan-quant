@@ -74,6 +74,10 @@ class StrategyEquityTracker:
     # Per-instrument running quantities, used when strategies prefer to
     # compute MTM themselves from bar closes without fetching unrealized P&L.
     _open_positions: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # Running peak of ``current_equity()`` since the last reset. Lazily seeded
+    # to ``initial_equity`` on first access. Used by strategy-level drawdown
+    # circuit breakers (e.g. demo_stack's DD breaker).
+    _hwm: float | None = field(default=None)
 
     def on_position_closed(self, realized_pnl: float, fx_to_base: float = 1.0) -> None:
         """Record a closed position's realised P&L.
@@ -91,6 +95,41 @@ class StrategyEquityTracker:
     def current_equity(self) -> float:
         """Total strategy equity = seed + realised + MTM of open positions."""
         return self.initial_equity + self.realized_pnl_base + self.mtm_base
+
+    def high_water_mark(self) -> float:
+        """Return the running peak of ``current_equity()``, ratcheting on call.
+
+        Lazily initialised to ``initial_equity`` so a brand-new tracker reports
+        a non-zero HWM (a zero HWM would make every drawdown ratio undefined).
+        """
+        eq = self.current_equity()
+        if self._hwm is None:
+            self._hwm = self.initial_equity
+        if eq > self._hwm:
+            self._hwm = eq
+        return self._hwm
+
+    def reset_hwm_to_current(self) -> None:
+        """Re-anchor the high-water mark to the current equity.
+
+        Used when a drawdown circuit breaker recovers — the post-recovery
+        equity becomes the new peak so the breaker doesn't immediately re-trip
+        against the pre-drawdown HWM.
+        """
+        self._hwm = self.current_equity()
+
+    def restore(self, realized_pnl_base: float, hwm: float) -> None:
+        """Restore the realised-PnL ledger and high-water mark after a restart.
+
+        A fresh tracker resets ``realized_pnl_base`` to 0 and the HWM to
+        ``initial_equity`` on every container start, which silently clears any
+        drawdown-based circuit breaker (e.g. demo_stack's DD breaker) and
+        under-reports per-strategy equity. Strategies that persist their state
+        across restarts call this from their rehydration path to re-anchor both
+        so the breaker measures drawdown against the true peak.
+        """
+        self.realized_pnl_base = float(realized_pnl_base)
+        self._hwm = float(hwm)
 
 
 # ── Currency / FX helpers ─────────────────────────────────────────────────────
