@@ -218,6 +218,7 @@ def write_hold_state(
     bars_held: int,
     entry_ts_ns: int,
     *,
+    entry_meta: dict | None = None,
     state_file: Path | None = None,
 ) -> None:
     """Persist the live hold-state (``bars_held`` + entry timestamp) for one
@@ -227,6 +228,12 @@ def write_hold_state(
     container restart can restore the TRUE elapsed hold instead of re-seeding
     ``hold_days``. Atomic (tmp-file + replace) and thread-safe. Never raises —
     a write failure is silently swallowed so it can never crash the strategy.
+
+    ``entry_meta`` (P5.4, 2026-06-24): on ENTRY, pass the sizing inputs
+    (equity, alloc, scale, units, price) so the entry computation is
+    forensically reconstructable after container stdout rotates — the gap that
+    made the 2026-06-19 CSPX over-size un-diagnosable. On per-bar updates pass
+    ``None`` and the existing ``entry_meta`` is PRESERVED.
     """
     path = state_file if state_file is not None else _HOLD_STATE_FILE
     entry = {
@@ -241,6 +248,12 @@ def write_hold_state(
                 existing: dict = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 existing = {}
+            if entry_meta is not None:
+                entry["entry_meta"] = entry_meta
+            else:
+                prev = existing.get(instrument_key)
+                if isinstance(prev, dict) and "entry_meta" in prev:
+                    entry["entry_meta"] = prev["entry_meta"]  # preserve across per-bar writes
             existing[instrument_key] = entry
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(existing, indent=2), encoding="utf-8")
@@ -272,6 +285,31 @@ def read_hold_state(
             "bars_held": int(entry["bars_held"]),
             "entry_ts_ns": int(entry.get("entry_ts_ns", 0)),
         }
+    except Exception:
+        return None
+
+
+def read_hold_entry_meta(
+    instrument_key: str,
+    *,
+    state_file: Path | None = None,
+) -> dict | None:
+    """Return the persisted ``entry_meta`` (equity/alloc/scale/units/price at
+    entry, P5.4) for the instrument, or None if absent/unreadable.
+
+    Used by the reconciliation D6 exposure-vs-book check to compare a held
+    position's entry notional against the book it was sized from. Only
+    populated for positions entered after the P5.4 deploy; older positions
+    return None and D6 skips them.
+    """
+    path = state_file if state_file is not None else _HOLD_STATE_FILE
+    try:
+        data: dict = json.loads(path.read_text(encoding="utf-8"))
+        entry = data.get(instrument_key)
+        if not entry:
+            return None
+        meta = entry.get("entry_meta")
+        return meta if isinstance(meta, dict) else None
     except Exception:
         return None
 

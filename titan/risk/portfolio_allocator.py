@@ -101,16 +101,41 @@ class PortfolioAllocator:
     def get_weight(self, strategy_id: str) -> float:
         """Per-strategy sleeve allocation, scaled by the top-of-book leverage governor.
 
-        ``leverage`` is 1.0 unless the correlation dial is enabled, so this is byte-identical
-        to inverse-vol behaviour by default. When enabled it scales EVERY sleeve's deployed
-        notional by the same factor (preserving the relative mix, changing only gross exposure).
+        With inverse-vol weights populated this is byte-identical to inverse-vol
+        behaviour x the dial (``leverage`` is 1.0 unless the correlation dial is
+        enabled). Before they are populated -- the cold-start / post-restart
+        window of up to ``min_history_days`` (30) business days, re-entered after
+        every container restart -- the fallback is a conservative equal share
+        ``1/N`` across registered strategies, with the correlation dial CLAMPED
+        to de-gross-only (``<= 1.0``).
+
+        The old empty-map fallback returned ``base = 1.0`` and then multiplied by
+        the dial, so every sleeve was sized as the WHOLE portfolio and the dial
+        RE-grossed that un-fractioned book to its 1.5x ceiling -- the dominant
+        multiplier in the 2026-06-23 over-sizing defect (SIZE-3 / ALLOC-1 /
+        OTH-3). ``1/N`` aligns the empty window with the eventual inverse-vol
+        mix; the dial clamp refuses to amplify before a real mix exists.
         """
-        base = (
-            1.0
-            if not self._weights
-            else self._weights.get(strategy_id, 1.0 / max(1, len(self._weights)))
-        )
-        return base * self._leverage
+        if self._weights:
+            base = self._weights.get(strategy_id, 1.0 / max(1, len(self._weights)))
+            return base * self._leverage
+        n = self._registered_strategy_count()
+        return (1.0 / max(1, n)) * min(1.0, self._leverage)
+
+    def _registered_strategy_count(self) -> int:
+        """Number of strategies registered with the PRM -- the universe the
+        empty-weights ``get_weight`` fallback divides capital across.
+
+        Lazy PRM import mirrors ``_rebalance`` and avoids the allocator<->PRM
+        circular import. Fails safe to 1 (no amplification, no div-by-zero).
+        """
+        try:
+            from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+
+            n = len(portfolio_risk_manager.get_equity_histories())
+            return n if n > 0 else 1
+        except Exception:
+            return 1
 
     def get_all_weights(self) -> dict[str, float]:
         return {sid: w * self._leverage for sid, w in self._weights.items()}

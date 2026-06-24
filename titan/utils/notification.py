@@ -236,6 +236,12 @@ def _fmt_pct(pct: float | None) -> str:
     return f"{sign}{pct * 100:.2f}%"
 
 
+# P3.6: a BUY whose notional exceeds this multiple of the strategy's own equity
+# is the 2026-06-23 CSPX over-size signature (notional 66k on a 6.4k book =
+# 10.4x). Flag it loudly in the signal message so a human sees it immediately.
+_NOTIONAL_RATIO_WARN = 3.0
+
+
 def notify_signal(
     strategy: str,
     action: str,
@@ -284,6 +290,15 @@ def notify_signal(
         )
     elif equity is not None:
         lines.append(f"  • Strategy equity: {_fmt_money(equity, equity_ccy)}")
+    # P3.6: flag an over-sized order -- notional far above the strategy book is
+    # the over-size signature the prior controls were blind to.
+    if notional is not None and equity:
+        ratio = abs(notional) / abs(equity)
+        if ratio > _NOTIONAL_RATIO_WARN:
+            lines.append(
+                f"  • :rotating_light: NOTIONAL {ratio:.1f}x strategy equity "
+                f"(> {_NOTIONAL_RATIO_WARN:g}x) — possible OVER-SIZE, check sizing"
+            )
     if account:
         lines.append(f"  • Account: `{account}`")
     return _dispatch("\n".join(lines))

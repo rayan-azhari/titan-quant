@@ -47,6 +47,10 @@ class CorrelationDialConfig:
     top_k: int = 150
     z_min_periods: int = 50
     step: int = 5  # weekly cadence for the (cached) correlation series
+    # P4.1 (2026-06-24): if the panel's latest observation is older than this
+    # many days the dial is acting on stale market state -> fail-safe to 1.0.
+    # The panel is a weekly-refreshed file; >10d means a refresh was missed.
+    max_staleness_days: int = 10
 
 
 def dial_leverage(corr_z: float, cfg: CorrelationDialConfig) -> float:
@@ -107,10 +111,23 @@ class CorrelationDial:
         if self._z is None or self._z.empty:
             return 1.0
         z = self._z
+        ref = pd.Timestamp(asof) if asof is not None else pd.Timestamp.today().normalize()
         if asof is not None:
             z = z[z.index <= pd.Timestamp(asof)]
             if z.empty:
                 return 1.0
+        # P4.1 freshness gate: refuse to act on a stale panel (a missed weekly
+        # refresh). Fail-safe to 1.0 rather than de-gross/re-gross on an old
+        # reading -- the panel was 28d stale on 2026-06-24 while the dial sat at
+        # its 1.5x ceiling (MLC-3/ALLOC-1).
+        age_days = (ref - z.index[-1]).days
+        if age_days > self._cfg.max_staleness_days:
+            logger.warning(
+                "[CorrelationDial] panel stale (%dd > %dd) — leverage forced to 1.0",
+                age_days,
+                self._cfg.max_staleness_days,
+            )
+            return 1.0
         return dial_leverage(float(z.iloc[-1]), self._cfg)
 
     def refresh(self) -> None:
@@ -128,5 +145,6 @@ def correlation_dial_from_config(alloc_cfg: dict) -> CorrelationDial:
         lev_max=float(sub.get("lev_max", 1.5)),
         corr_window=int(sub.get("corr_window", 63)),
         top_k=int(sub.get("top_k", 150)),
+        max_staleness_days=int(sub.get("max_staleness_days", 10)),
     )
     return CorrelationDial(cfg)
