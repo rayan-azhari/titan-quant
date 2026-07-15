@@ -37,12 +37,21 @@ _PANEL_DIR = Path(__file__).resolve().parents[2] / "data" / "clean_equity"
 
 @dataclass(frozen=True)
 class CorrelationDialConfig:
-    """Validated canonical cell (B1): k=0.5, clip (0.3, 1.5), 63d window, top-150 liquid names."""
+    """Validated canonical cell (B1): k=0.5, 63d window, top-150 liquid names.
+
+    Deployed de-gross-only since P4.1 (2026-06-24): the default ``lev_max`` is 1.0,
+    so the dial can shrink gross but never re-gross above the book's base. The B1
+    validation cell used clip (0.3, 1.5); pinning the ceiling to 1.0 is a risk
+    decision (the dial must not ADD leverage to a near-pure-long beta book off a
+    US single-stock panel with zero holdings overlap), not a re-tuning. Keeping the
+    default at 1.0 means the de-gross-only invariant holds even if a config omits
+    ``lev_max`` -- it no longer relies solely on the TOML override.
+    """
 
     enabled: bool = False  # operator enables deliberately
     k: float = 0.5  # de-gross strength on the correlation z-score
     lev_min: float = 0.3
-    lev_max: float = 1.5
+    lev_max: float = 1.0  # P4.1: de-gross-only ceiling (was 1.5); never re-gross
     corr_window: int = 63
     top_k: int = 150
     z_min_periods: int = 50
@@ -142,7 +151,7 @@ def correlation_dial_from_config(alloc_cfg: dict) -> CorrelationDial:
         enabled=bool(sub.get("enabled", False)),
         k=float(sub.get("k", 0.5)),
         lev_min=float(sub.get("lev_min", 0.3)),
-        lev_max=float(sub.get("lev_max", 1.5)),
+        lev_max=float(sub.get("lev_max", 1.0)),  # P4.1: de-gross-only default (was 1.5)
         corr_window=int(sub.get("corr_window", 63)),
         top_k=int(sub.get("top_k", 150)),
         max_staleness_days=int(sub.get("max_staleness_days", 10)),

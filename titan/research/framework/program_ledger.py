@@ -220,6 +220,7 @@ def program_deflated_sharpe(
     count_mode: str = "hypotheses",
     extra_trials: int = 0,
     sr_var_across_trials: float | None = None,
+    periods_per_year: int = 252,
 ) -> DsrResult:
     """Deflate ``sr_hat`` against the *program-wide* trial count.
 
@@ -257,6 +258,7 @@ def program_deflated_sharpe(
         sr_var_across_trials=sr_var,
         returns=returns,
         n_trials=max(n_program, 2),
+        periods_per_year=periods_per_year,
     )
     # n_trials in the returned struct should report the program N we actually
     # deflated against, not the max(...,2) guard floor.

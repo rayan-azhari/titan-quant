@@ -68,25 +68,44 @@ def deflated_sharpe(
     sr_var_across_trials: float,
     returns: pd.Series | np.ndarray,
     n_trials: int,
+    periods_per_year: int = 252,
     survivors_only: bool = False,
 ) -> DsrResult:
     """Bailey & López de Prado 2014 DSR with skew + kurt from the actual
     return distribution (no normal-returns assumption).
 
+    FREQUENCY CONTRACT (2026-07-15 units-bug fix). The DSR z-statistic is a Sharpe
+    divided by the standard error of that SAME Sharpe, and the SE is
+    ``sqrt((1 - skew*SR + (kurt-1)/4 * SR^2) / (T-1))`` where ``T`` is the number of
+    return OBSERVATIONS. So the Sharpe in the z and the ``T`` in the SE must be at the
+    SAME frequency. ``sr_hat`` / ``sr_var_across_trials`` are supplied ANNUALISED (to
+    match every other Sharpe in the codebase and the deployment gate), but ``returns``
+    is a per-observation series, so this function converts the annualised Sharpe and the
+    annualised expected-max to PER-OBSERVATION (divide by ``sqrt(periods_per_year)``)
+    before forming z. Feeding an annualised Sharpe straight into a ``/(T-1)`` that counts
+    daily bars inflated z by ~``sqrt(periods_per_year)`` (~16x for daily) and pinned
+    ``dsr_prob`` near 1.000 -- i.e. the ``dsr_prob >= 0.95`` deployment gate was
+    near-unfailable. Reported ``sharpe`` / ``e_max_sr`` stay ANNUALISED for readability;
+    only the z math is per-observation.
+
     Parameters
     ----------
     sr_hat:
-        Observed annualised Sharpe.
+        Observed ANNUALISED Sharpe.
     sr_var_across_trials:
-        Variance of Sharpes across the FULL sweep. If only survivors are
-        available, pass `survivors_only=True` -- the result is flagged
-        as OPTIMISTIC (true variance is larger, true DSR is worse).
+        Variance of the (annualised) Sharpes across the FULL sweep. If only survivors are
+        available, pass `survivors_only=True` -- the result is flagged as OPTIMISTIC
+        (true variance is larger, true DSR is worse).
 
     Returns:
-        This trial's per-bar (or per-day) return series. Skew + kurt are
-        estimated from this.
+        This trial's per-observation return series. Skew + kurt are estimated from this;
+        its length is ``T``.
     n_trials:
         Total cells in the sweep (NOT survivors).
+    periods_per_year:
+        Bar frequency of ``returns`` used to de-annualise ``sr_hat`` for the z math.
+        252 for daily (default); pass 252*24 for hourly, 12 for monthly, etc. -- it MUST
+        match the annualisation used to produce ``sr_hat``.
 
     Returns:
     -------
@@ -113,10 +132,20 @@ def deflated_sharpe(
     )
     skew, kurt = _safe_skew_kurt(returns)
     n_obs = len(pd.Series(returns).dropna())
-    T = max(n_obs, 30)
+    # Use the REAL observation count for the SE. A prior `max(n_obs, 30)` fabricated
+    # observations for tiny samples, shrinking the SE and biasing the gate toward PASS
+    # (the wrong direction). For real daily strategies n_obs >> 30 so this is a no-op;
+    # for a tiny sample the true (small) T correctly widens the SE -> harder to pass.
+    T = n_obs
     # Bailey & López de Prado 2014 eq. (4). Variance-stabilised gap z is:
-    #   z = (sr_hat - e_max_sr) / sqrt( (1 - skew*sr_hat + (kurt-1)/4 * sr_hat^2) / (T-1) )
-    denom_inside = 1.0 - skew * sr_hat + (kurt - 1.0) / 4.0 * sr_hat**2
+    #   z = (SR - E[maxSR]) / sqrt( (1 - skew*SR + (kurt-1)/4 * SR^2) / (T-1) )
+    # where SR is the PER-OBSERVATION Sharpe (same frequency as the T observations). The
+    # supplied sr_hat / e_max_sr are annualised -> de-annualise them here (see the
+    # frequency-contract note in the docstring; annualised-SR-into-daily-T was the bug).
+    sqrt_ppy = math.sqrt(periods_per_year)
+    sr_hat_obs = sr_hat / sqrt_ppy
+    e_max_obs = e_max_sr / sqrt_ppy
+    denom_inside = 1.0 - skew * sr_hat_obs + (kurt - 1.0) / 4.0 * sr_hat_obs**2
     if denom_inside <= 0 or T < 2:
         return DsrResult(
             sharpe=sr_hat,
@@ -131,7 +160,7 @@ def deflated_sharpe(
             survivors_only=survivors_only,
         )
     denom = denom_inside / (T - 1)
-    z = float((sr_hat - e_max_sr) / math.sqrt(denom))
+    z = float((sr_hat_obs - e_max_obs) / math.sqrt(denom))
     dsr_prob = float(stats.norm.cdf(z))
     return DsrResult(
         sharpe=sr_hat,

@@ -50,6 +50,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -122,6 +123,35 @@ _DEFAULT_CONFIG: dict = {
 _HALT_STATE_PATH = Path(__file__).resolve().parents[2] / ".tmp" / "portfolio_halt.json"
 # P0-9: the MC-predicted MaxDD band, written daily by scripts/monitor_live_drift.py.
 _DD_BAND_PATH = Path(__file__).resolve().parents[2] / ".tmp" / "dd_band.json"
+
+# Portfolio high-water mark, persisted across restarts (2026-07-15).
+#
+# THE BUG THIS FIXES. ``_portfolio_hwm`` initialised to None on every process start and
+# ``_portfolio_drawdown`` then anchored it to the CURRENT total equity, so **every restart
+# silently reset portfolio drawdown to 0%** -- releasing ``dd_scale`` (the 10% heat
+# throttle) and making the -15% kill unable to fire against any pre-restart peak.
+#
+# This defeated the design intent elsewhere in this very class: ``reset_halt`` goes out of
+# its way to PRESERVE the HWM ("the previous implementation re-anchored portfolio_hwm to
+# the current (drawn-down) total equity, which silently reduced the absolute kill-switch
+# distance"), and ``reset_hwm`` exists as an explicit operator-only escape hatch. All of
+# that was undone by the process boundary.
+#
+# It is worse than a slow leak: ``scripts/host_watchdog.ps1`` AUTO-RESTARTS the container
+# on a wedge, and wedges are most likely DURING a crisis -- so the drawdown protection
+# disarmed itself precisely when it was needed. The risk arbiter already persists its own
+# HWM (.tmp/risk_arbiter_hwm.json); the PRM simply never did.
+_HWM_STATE_PATH = Path(__file__).resolve().parents[2] / ".tmp" / "portfolio_hwm.json"
+
+# Absurdity guard on a restored HWM. A persisted peak more than this multiple of current
+# equity implies a >66% drawdown, which this book cannot reach (the -15% kill would have
+# fired long before) -- so it almost certainly means the CAPITAL BASE changed (a deposit,
+# withdrawal, or a different account). Discard it rather than instantly halting the book on
+# a phantom drawdown. Deliberately loose: a real -50% drawdown (ratio 2.0) is still restored.
+_HWM_MAX_PLAUSIBLE_RATIO = 3.0
+
+# Minimum seconds between HWM persists, so a rising market cannot cause a write storm.
+_HWM_PERSIST_MIN_INTERVAL_SECS = 30.0
 
 # P0-12: cap the rolling V3.8 NAV history (on_bar ticks ~252/yr) so it can't
 # grow unbounded. 512 daily bars (~2y) is ample for the 60-bar rolling-DD peak.
@@ -230,6 +260,12 @@ class PortfolioRiskManager:
         # breaches the MC-predicted p99 band (hysteresis via _drift_triggered).
         self._drift_scale: float = 1.0
         self._drift_triggered: bool = False
+
+        # Persisted-HWM state (see _HWM_STATE_PATH). Loaded lazily on the first
+        # _portfolio_drawdown() call, because _total_equity() needs registered strategies
+        # before we can sanity-check the restored value against the live book.
+        self._hwm_loaded: bool = False
+        self._hwm_last_persist_ts: float = 0.0
         self._dd_band: tuple[float, float] | None = None  # (p95, p99), non-positive
         self._last_drift_date: date | None = None
         # One-shot guard so the band-vs-bundle mismatch warning isn't spammed.
@@ -561,7 +597,12 @@ class PortfolioRiskManager:
         )
 
     def reset_hwm(self, operator: str = "unknown") -> None:
-        """Re-anchor the portfolio high-water mark to current total equity."""
+        """Re-anchor the portfolio high-water mark to current total equity.
+
+        PERSISTED (2026-07-15): the re-anchor is written to disk, so a deliberate
+        operator re-baseline survives the next restart. Without this the operator's
+        decision would be silently reverted by whatever was last on disk.
+        """
         new_hwm = self._total_equity()
         logger.warning(
             "[PortfolioRM] HWM RE-ANCHORED by operator=%s. old=%.2f new=%.2f",
@@ -570,6 +611,8 @@ class PortfolioRiskManager:
             new_hwm,
         )
         self._portfolio_hwm = new_hwm
+        self._hwm_loaded = True  # an explicit re-anchor must not be overwritten by a load
+        self._persist_hwm_state(force=True)
 
     # ── V3.8 envelope API (PRM Integration V3.8 directive §2.1) ────────────
 
@@ -1055,14 +1098,88 @@ class PortfolioRiskManager:
 
     def _portfolio_drawdown(self) -> float:
         total = self._total_equity()
+
+        # Restore the persisted peak BEFORE anchoring. Without this, every restart
+        # re-anchored the HWM to the current (possibly drawn-down) equity and reset
+        # portfolio drawdown to 0% -- see _HWM_STATE_PATH for why that is dangerous.
+        if not self._hwm_loaded:
+            self._hwm_loaded = True
+            self._load_hwm_state(total)
+
         if self._portfolio_hwm is None:
             self._portfolio_hwm = total
+            self._persist_hwm_state(force=True)
             return 0.0
         if total > self._portfolio_hwm:
             self._portfolio_hwm = total
+            self._persist_hwm_state()
         if self._portfolio_hwm <= 0:
             return 0.0
         return (total - self._portfolio_hwm) / self._portfolio_hwm
+
+    # ── Portfolio-HWM persistence (2026-07-15) ─────────────────────────────
+
+    def _load_hwm_state(self, total: float) -> None:
+        """Restore the portfolio HWM from disk so a restart cannot reset drawdown to 0%.
+
+        Guarded: a peak more than ``_HWM_MAX_PLAUSIBLE_RATIO`` x current equity almost
+        certainly means the CAPITAL BASE changed (deposit/withdrawal/different account),
+        not a real drawdown -- restoring it would halt the book on a phantom loss. Logs
+        LOUDLY either way: a restart that re-arms a genuine drawdown must be visible.
+        """
+        if not _HWM_STATE_PATH.exists():
+            logger.info("[PortfolioRM] no persisted HWM; anchoring to current equity %.2f", total)
+            return
+        try:
+            data = json.loads(_HWM_STATE_PATH.read_text())
+            hwm = float(data["hwm"])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[PortfolioRM] HWM restore failed (%s); anchoring to current.", e)
+            return
+
+        if not (hwm > 0) or hwm != hwm:  # non-positive or NaN
+            logger.warning("[PortfolioRM] persisted HWM %r invalid; anchoring to current.", hwm)
+            return
+
+        if total > 0 and hwm > total * _HWM_MAX_PLAUSIBLE_RATIO:
+            logger.critical(
+                "[PortfolioRM] persisted HWM %.2f is %.1fx current equity %.2f -- implausible "
+                "as a drawdown; the capital base likely changed. DISCARDING it and anchoring "
+                "to current. If this is a real drawdown, investigate before trading.",
+                hwm,
+                hwm / total,
+                total,
+            )
+            return
+
+        self._portfolio_hwm = hwm
+        dd = (total - hwm) / hwm if hwm > 0 else 0.0
+        log = logger.warning if dd <= -0.05 else logger.info
+        log(
+            "[PortfolioRM] HWM RESTORED from disk: %.2f (current equity %.2f => drawdown "
+            "%.2f%%). Drawdown is measured from the TRUE peak, not this restart.",
+            hwm,
+            total,
+            dd * 100.0,
+        )
+
+    def _persist_hwm_state(self, force: bool = False) -> None:
+        """Write the HWM to disk. Throttled so a rising market cannot storm the FS."""
+        now = time.time()
+        if not force and (now - self._hwm_last_persist_ts) < _HWM_PERSIST_MIN_INTERVAL_SECS:
+            return
+        self._hwm_last_persist_ts = now
+        try:
+            _HWM_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "hwm": float(self._portfolio_hwm or 0.0),
+                "updated": datetime.now(timezone.utc).isoformat(),
+            }
+            tmp = _HWM_STATE_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(payload, indent=2))
+            os.replace(tmp, _HWM_STATE_PATH)
+        except Exception as e:  # noqa: BLE001 -- persistence must never break the risk loop
+            logger.warning("[PortfolioRM] HWM persist failed: %s", e)
 
     # ── Vol-targeting: daily NAV, EWMA variance ──────────────────────────
 

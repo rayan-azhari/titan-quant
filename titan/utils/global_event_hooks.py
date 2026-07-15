@@ -33,9 +33,10 @@ import logging
 from typing import Any
 
 from nautilus_trader.live.node import TradingNode
-from nautilus_trader.model.events import OrderCanceled, OrderRejected
+from nautilus_trader.model.events import OrderCanceled, OrderRejected, PositionClosed
 
 from titan.utils.notification import notify_order_event
+from titan.utils.trade_ledger import record_closed_trade
 
 _log = logging.getLogger(__name__)
 
@@ -85,15 +86,37 @@ def _on_order_event(msg: Any) -> None:
         _log.warning("Global event hook error: %s", e)
 
 
+def _on_position_event(msg: Any) -> None:
+    """MessageBus handler for ``events.position.*``.
+
+    Persists every ``PositionClosed`` to the dashboard SQLite trade ledger so the
+    Trades tab has a full-history, client-agnostic record of closed round-trips
+    (the IBKR ``reqExecutions`` path is blind to the trading client's fills —
+    2026-07-02). Node-level so it captures EVERY strategy without per-strategy
+    code. Never raises into the runtime loop.
+    """
+    try:
+        if isinstance(msg, PositionClosed):
+            ok = record_closed_trade(msg)
+            if ok:
+                _log.info(
+                    "Trade ledger: recorded closed %s pnl=%s",
+                    str(getattr(msg, "instrument_id", "?")),
+                    str(getattr(msg, "realized_pnl", "?")),
+                )
+    except Exception as e:  # noqa: BLE001
+        _log.warning("Global position hook error: %s", e)
+
+
 def register_global_event_hooks(node: TradingNode) -> None:
-    """Subscribe the global rejection notifier to the node's message bus.
+    """Subscribe the global hooks to the node's message bus.
 
     Must be called *after* ``node.build()`` (the kernel/msgbus is created
     during build). Safe to call before or after ``add_strategy`` calls.
 
-    Subscribes to the broad ``events.order.*`` wildcard topic so any
-    NT-internal change to per-event sub-topics still routes through here.
-    Filtering happens in the handler.
+    Subscribes to the broad ``events.order.*`` / ``events.position.*`` wildcard
+    topics so any NT-internal change to per-event sub-topics still routes through
+    here. Filtering happens in the handlers.
     """
     try:
         msgbus = node.kernel.msgbus
@@ -105,4 +128,9 @@ def register_global_event_hooks(node: TradingNode) -> None:
 
     # Subscribe to all order events — handler filters by type.
     msgbus.subscribe(topic="events.order.*", handler=_on_order_event)
-    _log.info("Registered global event hook: events.order.* -> notify on rejection")
+    # Subscribe to all position events — handler persists closes to the ledger.
+    msgbus.subscribe(topic="events.position.*", handler=_on_position_event)
+    _log.info(
+        "Registered global event hooks: events.order.* -> notify on rejection; "
+        "events.position.* -> trade ledger on close"
+    )

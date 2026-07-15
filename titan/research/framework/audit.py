@@ -273,6 +273,9 @@ def run_audit(
         sr_var_across_trials=sr_var,
         returns=canonical_oos,
         n_trials=manifest.n_trials,
+        # canonical_sharpe is annualised at THIS frequency; pass it so the DSR
+        # de-annualises to per-observation correctly (daily 252, hourly 252*24, ...).
+        periods_per_year=periods_per_year,
     )
 
     # ── 5. Block-MC on the underlying (lesson A6) ──
