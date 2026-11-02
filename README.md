@@ -1,5 +1,7 @@
 # titan-quant
 
+[![Support me on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/rayanazhari)
+
 **The open framework companion to the book _Building a Production Quant Trading Stack_.**
 
 > 📖 **Read the book online:** <https://www.rayanazhari.co.uk/books/building-a-production-quant-trading-stack/>
@@ -67,6 +69,17 @@ every safety gate in Part V.
   proprietary name is introduced. Please keep example strategies edge-free and educational.
 - **The book** is all rights reserved and not open to contribution, but **corrections/typos are
   welcome** as issues.
+
+## Support this project
+
+titan-quant and the companion book are free. If they saved you time, taught you something, or
+kept a bad strategy out of production, you can say thanks with a coffee. Support helps fund
+further chapters, examples, and maintenance. It is entirely optional and buys no extra access,
+features, or advice.
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/rayanazhari)
+
+Starring the repo, reporting bugs, and sending corrections are just as welcome.
 
 ## Licence
 
